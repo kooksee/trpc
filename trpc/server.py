@@ -4,7 +4,6 @@ import socket
 
 import msgpack as packer
 from tornado import gen
-from tornado import ioloop
 from tornado.iostream import StreamClosedError
 from tornado.tcpserver import TCPServer
 
@@ -13,7 +12,6 @@ log = logging.getLogger(__name__)
 
 class ServerEntity(object):
     def __init__(self,
-                 name=None,
                  host="127.0.0.1",
                  port=8000,
                  handler=None,
@@ -21,7 +19,6 @@ class ServerEntity(object):
                  family=socket.AF_UNSPEC,
                  backlog=128,
                  reuse_port=False):
-        self.name = name or (host, port)
         self.host = host
         self.port = port
         self.handler = handler
@@ -124,26 +121,3 @@ class RPCServer(TCPServer):
             reuse_port=self.server_entity.reuse_port
         )
         self.start(num_processes=1)
-
-
-def start_server(host="127.0.0.1",
-                 port=8000,
-                 handler=None,
-                 ssl_options=None,
-                 max_buffer_size=None,
-                 read_chunk_size=None,
-                 family=socket.AF_UNSPEC,
-                 backlog=128,
-                 reuse_port=False):
-    RPCServer(
-        host=host,
-        port=port,
-        handler=handler,
-        ssl_options=ssl_options,
-        max_buffer_size=max_buffer_size,
-        read_chunk_size=read_chunk_size,
-        family=family,
-        backlog=backlog,
-        reuse_port=reuse_port
-    ).start_service()
-    ioloop.IOLoop.instance().start()

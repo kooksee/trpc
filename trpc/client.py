@@ -64,12 +64,15 @@ class ClientConnection(object):
     def _on_message(self, _data):
         try:
             self.on_data(_data)
+            self.stream.read_until(self.EOF, self._on_message)
+            if self.weight < 10:
+                self.weight += 1
         except StreamClosedError:
             log.warning("lost client at host %s", self.address)
+            self.weight -= 1
         except Exception as e:
             log.error(e)
-        finally:
-            self.stream.read_until(self.EOF, self._on_message)
+            self.weight -= 1
 
     def __write_callback(self, _id):
         log.info("{} write ok".format(_id))
@@ -77,7 +80,13 @@ class ClientConnection(object):
     def __call(self, _method, _data):
         _id = next(self._id)
         self._req_id[_id] = Future()
-        self.stream.write(packer.dumps((_id, _method, _data)) + self.EOF, partial(self.__write_callback, _id))
+        try:
+            self.stream.write(packer.dumps((_id, _method, _data)) + self.EOF, partial(self.__write_callback, _id))
+            if self.weight < 10:
+                self.weight += 1
+        except Exception, e:
+            log.error(e)
+            self.weight -= 1
         return self._req_id[_id]
 
     def __call__(self, _method, _data):
