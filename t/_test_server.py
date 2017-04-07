@@ -13,8 +13,6 @@ log = logging.getLogger(__name__)
 class Hello(BaseService):
     def hello(self, kk):
         print kk
-        # import time
-        # time.sleep(0.1)
         return "server return"
 
 

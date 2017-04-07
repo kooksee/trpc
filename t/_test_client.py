@@ -1,5 +1,6 @@
 # coding=utf-8
 import logging
+from threading import Thread
 
 from tornado import gen
 from tornado import ioloop
@@ -13,8 +14,20 @@ class MainHandler(RequestHandler):
     def get(self, *args, **kwargs):
         a = yield rpc_c("test")("hello", "hello, 我是客户端")
         print a
-        self.write(str("pp"))
+        self.write(str("ok"))
         self.finish()
+
+
+def test():
+    def __test():
+        import requests
+        r = requests.get("http://127.0.0.1:8088/")
+        print r.text
+
+    def _test():
+        Thread(target=__test).start()
+
+    ioloop.PeriodicCallback(_test, 100).start()
 
 
 if __name__ == '__main__':
@@ -29,8 +42,6 @@ if __name__ == '__main__':
         ("127.0.0.1", 12319),
     ])
     rpc_c.start_service()
-    # from torpc import RPCClient
-    # rpc_client = RPCClient(('127.0.0.1', 5003), 'client2')
 
     handlers = [
         ("/", MainHandler)
@@ -43,12 +54,5 @@ if __name__ == '__main__':
     ))
     app.listen(8088)
 
-    # a = yield rpc_c("test")("hello", "234323132sds")
-    # rpc_c("test")("hello", "234323132sds")
-    # ioloop.PeriodicCallback(test, 100).start()
-    # ioloop.IOLoop.current().add_callback(test)
+    ioloop.IOLoop.instance().add_callback(test)
     ioloop.IOLoop.instance().start()
-
-
-    # from multiprocessing.pool import ThreadPool
-    # from multiprocessing import Process, Manager

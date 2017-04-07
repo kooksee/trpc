@@ -5,9 +5,9 @@ import socket
 from functools import partial
 
 import msgpack as packer
-from concurrent.futures import Future
 from tornado import gen
 from tornado import ioloop
+from tornado.concurrent import Future
 from tornado.iostream import StreamClosedError
 from tornado.tcpclient import TCPClient
 
