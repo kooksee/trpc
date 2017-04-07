@@ -95,7 +95,6 @@ class ClientConnection(object):
 class RPCClient(TCPClient):
     _services = {}
     client_entitys = {}
-    load_bance = {}
 
     def add_service(self,
                     name=None,
@@ -117,7 +116,6 @@ class RPCClient(TCPClient):
 
     @gen.coroutine
     def start_service(self):
-        print self.client_entitys
         for client_entity in self.client_entitys.itervalues():
             for addr in client_entity.address:
                 stream = yield self.connect(
