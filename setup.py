@@ -14,9 +14,4 @@ setup(
     packages=find_packages('trpc'),
     include_package_data=True,
     zip_safe=True,
-    install_requires=[f.split("==")[0] for f in open("requirements.txt")],
-    test_suite='tests',
-    tests_require=['unittest2'],
-    entry_points={
-    }
 )
