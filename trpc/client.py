@@ -1,38 +1,17 @@
 # -*- coding: utf-8 -*-
 import logging
-import random
 import socket
 from functools import partial
 
 import msgpack as packer
 from tornado import gen
-from tornado import ioloop
 from tornado.concurrent import Future
 from tornado.iostream import StreamClosedError
 from tornado.tcpclient import TCPClient
 
-from trpc.service import BaseService
-from trpc.util import _IDGenerator
+from trpc.util import _IDGenerator, LoadBance
 
 log = logging.getLogger(__name__)
-
-
-class ClientEntity(object):
-    def __init__(self,
-                 name=None,
-                 address=None,
-                 handler=None,
-                 conn=None,
-                 af=socket.AF_UNSPEC,
-                 ssl_options=None,
-                 max_buffer_size=None):
-        self.name = name
-        self.address = address
-        self.handler = handler
-        self.conn = conn
-        self.af = af
-        self.ssl_options = ssl_options
-        self.max_buffer_size = max_buffer_size
 
 
 class ClientConnection(object):
@@ -42,37 +21,61 @@ class ClientConnection(object):
     _req_id = {}
     _id = _IDGenerator()
 
-    def __init__(self, stream, address, service, name=None):
-        self.stream = stream
+    def __init__(self,
+                 conn=None,
+                 addr=None,
+                 name=None,
+                 af=socket.AF_UNSPEC,
+                 ssl_options=None,
+                 max_buffer_size=None,
+                 retry=5):
 
-        self.address = address
-        self.handler = BaseService()
+        self.stream = None
+        self.retry = retry
+        self.conn = conn
+        self.addr = addr
+        self.host, self.port = addr
         self.name = name
-        self.service = service
+        self.af = af
+        self.ssl_options = ssl_options
+        self.max_buffer_size = max_buffer_size
 
-        self.service._services[self.name][address] = self
-
-        self.stream.set_close_callback(self.on_close)
-        self.stream.read_until(self.EOF, self._on_message)
+    @gen.coroutine
+    def start(self):
+        self.__conn()
 
     def on_close(self):
-        log.info("close {}".format(self.address))
-        del self.service._services[self.name][self.address]
-        if not self.service._services[self.name]:
-            del self.service._services[self.name]
+        self.stream = None
+        log.error("service {} {}:{} closed".format(self.name, self.host, self.port))
+
+    @gen.coroutine
+    def __conn(self):
+        i = self.retry
+        while i > 0:
+            try:
+                self.stream = yield self.conn(
+                    self.host,
+                    self.port,
+                    af=self.af,
+                    ssl_options=self.ssl_options,
+                    max_buffer_size=self.max_buffer_size
+                )
+                self.stream.set_close_callback(self.on_close)
+                self.stream.read_until(self.EOF, self._on_message)
+                break
+            except StreamClosedError, e:
+                log.error(e)
+            except Exception, e:
+                log.error(e)
+            self.stream = None
+            i -= 1
 
     def _on_message(self, _data):
         try:
             self.on_data(_data)
             self.stream.read_until(self.EOF, self._on_message)
-            if self.weight < 10:
-                self.weight += 1
-        except StreamClosedError:
-            log.warning("lost client at host %s", self.address)
-            self.weight -= 1
         except Exception as e:
             log.error(e)
-            self.weight -= 1
 
     def __write_callback(self, _id):
         log.info("{} write ok".format(_id))
@@ -80,13 +83,16 @@ class ClientConnection(object):
     def __call(self, _method, _data):
         _id = next(self._id)
         self._req_id[_id] = Future()
-        try:
-            self.stream.write(packer.dumps((_id, _method, _data)) + self.EOF, partial(self.__write_callback, _id))
-            if self.weight < 10:
-                self.weight += 1
-        except Exception, e:
-            log.error(e)
-            self.weight -= 1
+        _x = lambda: self.stream.write(
+            packer.dumps((_id, _method, _data)) + self.EOF,
+            partial(self.__write_callback, _id)
+        )
+        if not self.stream:
+            self.__conn()
+            if self.stream:
+                _x()
+        else:
+            _x()
         return self._req_id[_id]
 
     def __call__(self, _method, _data):
@@ -101,9 +107,17 @@ class ClientConnection(object):
             log.error(e)
 
 
+class ClientEntity(object):
+    def __init__(self,
+                 name=None,
+                 conns=None):
+        self.name = name
+        self.conns = conns
+
+
 class RPCClient(TCPClient):
-    _services = {}
     client_entitys = {}
+    lb = LoadBance()
 
     def add_service(self,
                     name=None,
@@ -112,60 +126,35 @@ class RPCClient(TCPClient):
                     ssl_options=None,
                     max_buffer_size=None):
 
-        if name not in self._services:
-            self._services[name] = {}
-
         self.client_entitys[name] = ClientEntity(
             name=name,
-            address=address,
-            af=af,
-            ssl_options=ssl_options,
-            max_buffer_size=max_buffer_size
+            conns={addr: ClientConnection(
+                conn=self.connect,
+                addr=addr,
+                name=name,
+                af=af,
+                ssl_options=ssl_options,
+                max_buffer_size=max_buffer_size
+            ) for addr in address}
         )
 
     @gen.coroutine
     def start_service(self):
-        for client_entity in self.client_entitys.itervalues():
-            for addr in client_entity.address:
-                stream = yield self.connect(
-                    addr[0],
-                    addr[1],
-                    af=client_entity.af,
-                    ssl_options=client_entity.ssl_options,
-                    max_buffer_size=client_entity.max_buffer_size
-                )
-                ClientConnection(stream, addr, self, name=client_entity.name)
+        for name, client_entity in self.client_entitys.iteritems():
+            for addr, conn in client_entity.conns.iteritems():
+                self.lb.set_weight(name, addr)
+                conn.start()
 
-    def __call__(self, service_name):
+    @gen.coroutine
+    def __call__(self, service_name, _method, _data):
+        addr = self.lb.get_key(service_name)
+        if not addr:
+            log.error("con not find service {}".format(service_name))
+            raise gen.Return()
 
-        b = {}
-        for c in self._services[service_name].itervalues():
-            if not b.get(c.weight):
-                b[c.weight] = [c]
-            else:
-                b[c.weight].append(c)
+        _conn = self.client_entitys[service_name].conns.get(addr)
+        _res = yield _conn(_method, _data)
+        if not _res:
+            raise gen.Return()
 
-        bk = b.keys()
-        while 1:
-            _r = random.choice([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
-            for i in bk:
-                if _r < i:
-                    _d = random.choice(b[i])
-                    return _d
-
-
-def start_client(name=None,
-                 address=None,
-                 af=socket.AF_UNSPEC,
-                 ssl_options=None,
-                 max_buffer_size=None):
-    rc = RPCClient()
-    rc.add_service(
-        name=name,
-        address=address,
-        af=af,
-        ssl_options=ssl_options,
-        max_buffer_size=max_buffer_size
-    )
-    rc.start_service()
-    ioloop.IOLoop.instance().start()
+        raise gen.Return(_res)
