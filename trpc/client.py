@@ -5,6 +5,7 @@ from functools import partial
 
 import msgpack as packer
 from tornado import gen
+from tornado import ioloop
 from tornado.concurrent import Future
 from tornado.iostream import StreamClosedError
 from tornado.tcpclient import TCPClient
@@ -40,34 +41,53 @@ class ClientConnection(object):
         self.ssl_options = ssl_options
         self.max_buffer_size = max_buffer_size
 
+        self.__try_connect_task = ioloop.PeriodicCallback(self.__conn, 1000)
+
     @gen.coroutine
     def start(self):
-        self.__conn()
+        self._conn()
 
     def on_close(self):
         self.stream = None
+        # if not self.__try_connect_task.is_running():
+        #     self.__try_connect_task.start()
         log.error("service {} {}:{} closed".format(self.name, self.host, self.port))
 
     @gen.coroutine
     def __conn(self):
+        try:
+            log.info("try to connect service {} {}:{}".format(self.name, self.host, self.port))
+            self.stream = yield self.conn(
+                self.host,
+                self.port,
+                af=self.af,
+                ssl_options=self.ssl_options,
+                max_buffer_size=self.max_buffer_size
+            )
+            self.stream.read_until(self.EOF, self._on_message)
+            self.stream.set_close_callback(self.on_close)
+            log.info("connect service {} {}:{} ok".format(self.name, self.host, self.port))
+
+            # if self.__try_connect_task.is_running():
+            #     self.__try_connect_task.stop()
+
+            return
+        except StreamClosedError, e:
+            log.error(e)
+        except Exception, e:
+            log.error(e)
+
+        # if not self.__try_connect_task.is_running():
+        #     self.__try_connect_task.start()
+        self.stream = None
+
+    def _conn(self):
         i = self.retry
         while i > 0:
-            try:
-                self.stream = yield self.conn(
-                    self.host,
-                    self.port,
-                    af=self.af,
-                    ssl_options=self.ssl_options,
-                    max_buffer_size=self.max_buffer_size
-                )
-                self.stream.set_close_callback(self.on_close)
-                self.stream.read_until(self.EOF, self._on_message)
-                break
-            except StreamClosedError, e:
-                log.error(e)
-            except Exception, e:
-                log.error(e)
-            self.stream = None
+            if self.stream:
+                return
+
+            self.__conn()
             i -= 1
 
     def _on_message(self, _data):
@@ -87,12 +107,18 @@ class ClientConnection(object):
             packer.dumps((_id, _method, _data)) + self.EOF,
             partial(self.__write_callback, _id)
         )
-        if not self.stream:
-            self.__conn()
-            if self.stream:
-                _x()
-        else:
+
+        if self.stream:
             _x()
+        else:
+            self._req_id[_id].set_result(None)
+
+        # if not self.stream:
+        #     self.__conn()
+        #     if self.stream:
+        #         _x()
+        # else:
+        #     _x()
         return self._req_id[_id]
 
     def __call__(self, _method, _data):

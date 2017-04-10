@@ -53,8 +53,12 @@ class LoadBance(object):
 
 
 class TRPCException(Exception):
-    def __init__(self, _msg):
+    def __init__(self, _code=None, _msg=None):
         self._msg = _msg
+        self.code = _code
+
+    def get(self):
+        return self.code, self._msg
 
     def __str__(self):
         return self._msg

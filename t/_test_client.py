@@ -1,6 +1,7 @@
 # coding=utf-8
 import logging
 from threading import Thread
+from uuid import uuid4
 
 from tornado import gen
 from tornado import ioloop
@@ -26,6 +27,8 @@ def test():
         print r.text
 
     def _test():
+        print uuid4()
+
         Thread(target=__test).start()
 
     ioloop.PeriodicCallback(_test, 10).start()
@@ -48,8 +51,8 @@ if __name__ == '__main__':
     rpc_c.add_service(name="test", address=[
         ("127.0.0.1", 12315),
         ("127.0.0.1", 12316),
-        ("127.0.0.1", 12317),
-        ("127.0.0.1", 12318),
+        # ("127.0.0.1", 12317),
+        # ("127.0.0.1", 12318),
         # ("127.0.0.1", 12319),
     ])
     rpc_c.start_service()
