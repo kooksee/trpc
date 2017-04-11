@@ -53,8 +53,6 @@ class ClientConnection(object):
     def on_close(self):
         self.stream = None
         self.lb.del_weight(self.name, self.addr)
-        if not self.__try_connect_task.is_running():
-            self.__try_connect_task.start()
         log.error("service {} {}:{} closed".format(self.name, self.host, self.port))
 
     @gen.coroutine
