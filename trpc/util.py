@@ -14,19 +14,26 @@ def _IDGenerator():
 class LoadBance(object):
     __weight = {}
     _rc = range(10)
+    WEIGHT = 10
 
     def set_weight(self, name, key, weight=10):
         if name not in self.__weight:
             self.__weight[name] = {}
         self.__weight[name][key] = weight
 
+    def del_weight(self, name, key):
+        if self.__exist(name, key):
+            self.__weight[name][key] = 0
+
     def increase(self, name, key):
         if self.__exist(name, key):
-            self.__weight[name][key] += 1
+            if self.__weight[name][key] < self.WEIGHT:
+                self.__weight[name][key] += 2
 
     def decrease(self, name, key):
         if self.__exist(name, key):
-            self.__weight[name][key] -= 1
+            if self.__weight[name][key] > 0:
+                self.__weight[name][key] -= 2
 
     def get_key(self, name):
         _r = 0
@@ -45,7 +52,7 @@ class LoadBance(object):
             _r += 1
 
     def __exist(self, name, key):
-        return name in self.__weight and key in self.__weight[name][key]
+        return name in self.__weight and key in self.__weight[name]
 
     def del_key(self, name, key):
         if self.__exist(name, key):

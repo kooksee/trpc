@@ -24,12 +24,15 @@ class ClientConnection(object):
 
     def __init__(self,
                  conn=None,
+                 lb=None,
                  addr=None,
                  name=None,
                  af=socket.AF_UNSPEC,
                  ssl_options=None,
                  max_buffer_size=None,
                  retry=5):
+
+        self.lb = lb
 
         self.stream = None
         self.retry = retry
@@ -49,8 +52,9 @@ class ClientConnection(object):
 
     def on_close(self):
         self.stream = None
-        # if not self.__try_connect_task.is_running():
-        #     self.__try_connect_task.start()
+        self.lb.del_weight(self.name, self.addr)
+        if not self.__try_connect_task.is_running():
+            self.__try_connect_task.start()
         log.error("service {} {}:{} closed".format(self.name, self.host, self.port))
 
     @gen.coroutine
@@ -66,19 +70,24 @@ class ClientConnection(object):
             )
             self.stream.read_until(self.EOF, self._on_message)
             self.stream.set_close_callback(self.on_close)
-            log.info("connect service {} {}:{} ok".format(self.name, self.host, self.port))
 
-            # if self.__try_connect_task.is_running():
-            #     self.__try_connect_task.stop()
+            self.lb.set_weight(self.name, self.addr)
+
+            if self.__try_connect_task.is_running():
+                self.__try_connect_task.stop()
+
+            log.info("connect to service {} {}:{} ok".format(self.name, self.host, self.port))
 
             return
         except StreamClosedError, e:
+            self.lb.del_weight(self.name, self.addr)
             log.error(e)
         except Exception, e:
+            self.lb.decrease(self.name, self.addr)
             log.error(e)
 
-        # if not self.__try_connect_task.is_running():
-        #     self.__try_connect_task.start()
+        if not self.__try_connect_task.is_running():
+            self.__try_connect_task.start()
         self.stream = None
 
     def _conn(self):
@@ -94,7 +103,11 @@ class ClientConnection(object):
         try:
             self.on_data(_data)
             self.stream.read_until(self.EOF, self._on_message)
+        except StreamClosedError, e:
+            self.lb.del_weight(self.name, self.addr)
+            log.error(e)
         except Exception as e:
+            self.lb.decrease(self.name, self.addr)
             log.error(e)
 
     def __write_callback(self, _id):
@@ -110,15 +123,15 @@ class ClientConnection(object):
 
         if self.stream:
             _x()
+            self.lb.increase(self.name, self.addr)
         else:
-            self._req_id[_id].set_result(None)
+            self.__conn()
+            if self.stream:
+                _x()
+                self.lb.increase(self.name, self.addr)
+            else:
+                self._req_id[_id].set_result(None)
 
-        # if not self.stream:
-        #     self.__conn()
-        #     if self.stream:
-        #         _x()
-        # else:
-        #     _x()
         return self._req_id[_id]
 
     def __call__(self, _method, _data):
@@ -156,6 +169,7 @@ class RPCClient(TCPClient):
             name=name,
             conns={addr: ClientConnection(
                 conn=self.connect,
+                lb=self.lb,
                 addr=addr,
                 name=name,
                 af=af,
@@ -175,7 +189,7 @@ class RPCClient(TCPClient):
     def __call__(self, service_name, _method, _data):
         addr = self.lb.get_key(service_name)
         if not addr:
-            log.error("con not find service {}".format(service_name))
+            log.error("can not find service {}".format(service_name))
             raise gen.Return()
 
         _conn = self.client_entitys[service_name].conns.get(addr)
