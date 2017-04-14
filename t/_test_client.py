@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from tornado import gen
 from tornado import ioloop
+from tornado.concurrent import Future
 from tornado.web import Application, RequestHandler
 
 log = logging.getLogger(__name__)
@@ -19,11 +20,10 @@ class MainHandler(RequestHandler):
         self.write(str("ok"))
         self.finish()
 
-
 def test():
     def __test():
         import requests
-        r = requests.get("http://127.0.0.1:8088/")
+        r = requests.get("http://127.0.0.1:12040/")
         print r.text
 
     def _test():
@@ -31,7 +31,7 @@ def test():
 
         Thread(target=__test).start()
 
-    ioloop.PeriodicCallback(_test, 10).start()
+    ioloop.PeriodicCallback(_test, 1000).start()
 
 
 if __name__ == '__main__':
@@ -44,7 +44,8 @@ if __name__ == '__main__':
         secret_key="123456@#$%^&*((*&^%$#%^&*&^%$##$%^&*(*&^%$#",
         debug=True
     ))
-    app.listen(8088)
+    app.listen(12040)
+
     from trpc.client import RPCClient
 
     rpc_c = RPCClient()
